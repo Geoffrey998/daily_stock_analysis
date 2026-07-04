@@ -5,7 +5,9 @@
 # 使用方式:
 #   定时模式: docker-compose -f ./docker/docker-compose.yml up -d
 #   FastAPI模式: docker-compose -f ./docker/docker-compose.yml up -d server
-#   同时启动: docker-compose -f ./docker/docker-compose.yml up -d analyzer server
+#   云端主服务: docker-compose -f ./docker/docker-compose.yml up -d cloud-worker
+#   飞书问答: docker-compose -f ./docker/docker-compose.yml up -d feishu-bot
+#   同时启动: docker-compose -f ./docker/docker-compose.yml up -d analyzer server feishu-bot
 
 name: daily-stock-analysis
 version: '3.8'
@@ -57,6 +59,22 @@ x-common: &common
         memory: 512M
 
 services:
+  # 云端主服务：准点日报 + 飞书 Stream 问答
+  # 推荐部署到云端常驻容器，用它替代 GitHub Actions 的准点调度。
+  cloud-worker:
+    <<: *common
+    container_name: stock-cloud-worker
+    command: ["python", "main.py", "--serve", "--schedule", "--no-run-immediately", "--host", "0.0.0.0", "--port", "${CLOUD_API_PORT:-8000}"]
+    environment:
+      - TZ=Asia/Shanghai
+      - WEBUI_HOST=0.0.0.0
+      - BOT_ENABLED=true
+      - FEISHU_STREAM_ENABLED=true
+      - AGENT_MODE=true
+      - AGENT_NL_ROUTING=true
+      - SCHEDULE_ENABLED=true
+      - SCHEDULE_TIMES=${SCHEDULE_TIMES:-12:35,20:00}
+
   # 定时任务模式
   analyzer:
     <<: *common
@@ -70,3 +88,17 @@ services:
     # 若使用 network_mode: host，则以下 ports 映射无效，端口由 command 中的 --port 指定
     ports:
       - "${API_PORT:-8000}:${API_PORT:-8000}"
+
+  # 飞书 Stream 问答机器人
+  # 运行后会保持进程常驻，并通过飞书长连接接收私聊或群 @ 消息。
+  feishu-bot:
+    <<: *common
+    container_name: stock-feishu-bot
+    command: ["python", "main.py", "--serve-only", "--host", "0.0.0.0", "--port", "${BOT_API_PORT:-8001}"]
+    environment:
+      - TZ=Asia/Shanghai
+      - WEBUI_HOST=0.0.0.0
+      - BOT_ENABLED=true
+      - FEISHU_STREAM_ENABLED=true
+      - AGENT_MODE=true
+      - AGENT_NL_ROUTING=true
